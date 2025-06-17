@@ -66,7 +66,7 @@ def submit_and_evaluate(config: dict):
     else:
         logger.info(f"Outputs dir '{outputs_dir}' created.")
 
-    model, _ = build_motip(config=config)
+    model = build_motip(config=config)
 
     use_previous_checkpoint = config.get("USE_PREVIOUS_CHECKPOINT", False)
     if not use_previous_checkpoint:
@@ -350,13 +350,14 @@ def get_results_of_one_sequence(
 ):
     tracker_results = []
     assert len(sequence_loader) > 10, "The sequence loader is too short."
-    for t, (image, image_path) in enumerate(sequence_loader):
+    for t, (image, image_path, bbox) in enumerate(sequence_loader):
         if t == 10:
             begin_time = time.time()
         image.tensors = image.tensors.cuda()
         image.mask = image.mask.cuda()
+        bbox = [b.cuda() for b in bbox]
         # image = nested_tensor_from_tensor_list(tensor_list=[image[0]])
-        runtime_tracker.update(image=image)
+        runtime_tracker.update(image=image, bbox=bbox)
         _results = runtime_tracker.get_track_results()
         tracker_results.append(_results)
     fps = (len(sequence_loader) - 10) / (time.time() - begin_time)

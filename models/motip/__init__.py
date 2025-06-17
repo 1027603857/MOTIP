@@ -41,11 +41,11 @@ def build(config: dict):
     detr_args.set_cost_giou = config["DETR_SET_COST_GIOU"]
 
     detr_framework = config["DETR_FRAMEWORK"].lower()
-    match detr_framework:
-        case "deformable_detr":
-            detr, detr_criterion, _ = build_deformable_detr(args=detr_args)
-        case _:
-            raise NotImplementedError(f"DETR framework {config['DETR_FRAMEWORK']} is not supported.")
+    # match detr_framework:
+    #     case "deformable_detr":
+    #         detr, detr_criterion, _ = build_deformable_detr(args=detr_args)
+    #     case _:
+    #         raise NotImplementedError(f"DETR framework {config['DETR_FRAMEWORK']} is not supported.")
 
     # Build each component:
     # 1. trajectory modeling (currently, only FFNs are used):
@@ -53,6 +53,7 @@ def build(config: dict):
         detr_dim=config["DETR_HIDDEN_DIM"],
         ffn_dim_ratio=config["FFN_DIM_RATIO"],
         feature_dim=config["FEATURE_DIM"],
+        n_grid=config["N_GRID"],
     ) if config["ONLY_DETR"] is False else None
     # 2. ID decoder:
     _id_decoder = IDDecoder(
@@ -69,11 +70,9 @@ def build(config: dict):
 
     # Construct MOTIP model:
     motip_model = MOTIP(
-        detr=detr,
-        detr_framework=detr_framework,
         only_detr=config["ONLY_DETR"],
         trajectory_modeling=_trajectory_modeling,
         id_decoder=_id_decoder,
     )
 
-    return motip_model, detr_criterion
+    return motip_model

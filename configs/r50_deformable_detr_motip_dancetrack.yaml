@@ -4,8 +4,8 @@ SUPER_CONFIG_PATH:          # super (father) config path
 SEED: 42
 
 # System Settings:
-NUM_WORKERS: 6
-PREFETCH_FACTOR: 6
+NUM_WORKERS: 12
+PREFETCH_FACTOR: 8
 DEVICE: cuda
 
 # Data settings:
@@ -107,8 +107,8 @@ SEPARATE_CLIP_NORM: True
 USE_ACCELERATE_CLIP_NORM: True
 
 # Resumes and Pretrains:
-DETR_PRETRAIN: ./pretrains/r50_deformable_detr_coco_dancetrack.pth
-RESUME_MODEL:
+DETR_PRETRAIN:
+RESUME_MODEL: outputs/r50_deformable_detr_motip_dancetrack/checkpoint_6.pth
 RESUME_OPTIMIZER: True
 RESUME_SCHEDULER: True
 RESUME_STATES: True
@@ -143,3 +143,6 @@ MULTI_LAST_CHECKPOINTS: 0
 
 # For previous version of MOTIP checkpoints:
 USE_PREVIOUS_CHECKPOINT: False
+
+# New
+N_GRID: 64

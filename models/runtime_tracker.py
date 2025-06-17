@@ -7,8 +7,9 @@ from scipy.optimize import linear_sum_assignment
 from structures.instances import Instances
 from structures.ordered_set import OrderedSet
 from utils.misc import distributed_device
-from utils.box_ops import box_cxcywh_to_xywh
+from utils.box_ops import box_cxcywh_to_xywh, box_cxcywh_to_xyxy
 from models.misc import get_model
+from torchvision.ops import roi_align
 
 
 class RuntimeTracker:
@@ -25,6 +26,7 @@ class RuntimeTracker:
             newborn_thresh: float = 0.5,
             id_thresh: float = 0.1,
             area_thresh: int = 0,
+            n_grid: int = 64,
             only_detr: bool = False,
             dtype: torch.dtype = torch.float32,
     ):
@@ -48,6 +50,7 @@ class RuntimeTracker:
         self.id_thresh = id_thresh
         self.area_thresh = area_thresh
         self.only_detr = only_detr
+        self.n_grid = n_grid
         self.num_id_vocabulary = get_model(model).num_id_vocabulary
 
         # Check for the legality of settings:
@@ -69,7 +72,7 @@ class RuntimeTracker:
             self.id_queue.add(i)
         # All fields are in shape (T, N, ...)
         self.trajectory_features = torch.zeros(
-            (0, 0, 256), dtype=dtype, device=distributed_device(),
+            (0, 0, self.n_grid * self.n_grid * 3), dtype=dtype, device=distributed_device(),
         )
         self.trajectory_boxes = torch.zeros(
             (0, 0, 4), dtype=dtype, device=distributed_device(),
@@ -89,9 +92,33 @@ class RuntimeTracker:
         return
 
     @torch.no_grad()
-    def update(self, image):
-        detr_out = self.model(frames=image, part="detr")
-        scores, categories, boxes, output_embeds = self._get_activate_detections(detr_out=detr_out)
+    def update(self, image, bbox):
+        boxes, scores, categories = bbox
+        dets_remain_idx = scores > 0.25
+        boxes = boxes[dets_remain_idx]
+        scores = scores[dets_remain_idx]
+        categories = categories[dets_remain_idx]
+
+        temp_imgs = image.tensors
+        # info = batch["infos"][bidx][fidx]  # x1y1x2y2
+        # batch["infos"][bidx][fidx] = None
+        box = box_cxcywh_to_xyxy(boxes)  # cxcywh
+
+        img_ = temp_imgs[:1]  # (1, C, H, W)
+        img_h, img_w = img_.shape[-2:]
+        box *= torch.tensor([img_w, img_h, img_w, img_h], device=box.device)
+
+        if len(box):
+            x1, y1, x2, y2 = box.T
+            rois = torch.stack([torch.zeros_like(x1), x1, y1, x2, y2], dim=1)
+            sampled_features = roi_align(
+                img_, rois,
+                output_size=(self.n_grid, self.n_grid),
+            ).flatten(start_dim=1)
+            output_embeds = sampled_features
+        else:
+            output_embeds = torch.empty((0, img_.shape[1] * self.n_grid * self.n_grid), device=img_.device)
+
         if self.only_detr:
             id_pred_labels = self.num_id_vocabulary * torch.ones(boxes.shape[0], dtype=torch.int64, device=boxes.device)
         else:
@@ -278,7 +305,7 @@ class RuntimeTracker:
                 torch.arange(_T, dtype=torch.int64, device=distributed_device()), 't -> t n', n=_N,
             )
             _features = torch.zeros(
-                (_T, _N, 256), dtype=self.dtype, device=distributed_device(),
+                (_T, _N, self.n_grid * self.n_grid * 3), dtype=self.dtype, device=distributed_device(),
             )
             _masks = torch.ones((_T, _N), dtype=torch.bool, device=distributed_device())
             # 3.1. padding to trajectory infos:
@@ -290,7 +317,7 @@ class RuntimeTracker:
         # 4. update trajectory infos:
         _N = self.trajectory_id_labels.shape[1]
         current_id_labels = self.trajectory_id_labels[0] if self.trajectory_id_labels.shape[0] > 0 else id_labels
-        current_features = torch.zeros((_N, 256), dtype=self.dtype, device=distributed_device())
+        current_features = torch.zeros((_N, self.n_grid * self.n_grid * 3), dtype=self.dtype, device=distributed_device())
         current_boxes = torch.zeros((_N, 4), dtype=self.dtype, device=distributed_device())
         current_times = self.trajectory_id_labels.shape[0] * torch.ones((_N,), dtype=torch.int64, device=distributed_device())
         current_masks = torch.ones((_N,), dtype=torch.bool, device=distributed_device())
