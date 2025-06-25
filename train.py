@@ -337,7 +337,7 @@ def train_one_epoch(
 
                 img_ = temp_imgs[fidx:fidx + 1]  # (1, C, H, W)
                 img_h, img_w = img_.shape[-2:]
-                box *= torch.tensor([img_w, img_h, img_w, img_h], device=box.device)
+                box *= torch.tensor([img_w, img_h, img_w * 1.05, img_h * 1.05], device=box.device)
 
                 if len(box):
                     x1, y1, x2, y2 = box.T

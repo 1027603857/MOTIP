@@ -108,7 +108,7 @@ USE_ACCELERATE_CLIP_NORM: True
 
 # Resumes and Pretrains:
 DETR_PRETRAIN:
-RESUME_MODEL: outputs/r50_deformable_detr_motip_dancetrack/checkpoint_6.pth
+RESUME_MODEL: outputs/r50_deformable_detr_motip_dancetrack/checkpoint_5.pth
 RESUME_OPTIMIZER: True
 RESUME_SCHEDULER: True
 RESUME_STATES: True

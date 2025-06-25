@@ -6,9 +6,26 @@ import math
 
 from models.ffn import FFN
 
+class nmode(nn.Module):
+    def __init__(self, dim: int, alpha: float=0.2, step: int=5):
+        super().__init__()
+        self.linear = nn.Linear(dim, dim * 2, bias=True)
+        self.out = nn.Linear(dim * 2, dim)
+        self.activation = nn.ReLU()
+        self.norm = nn.LayerNorm(dim)
+        self.a = alpha
+        self.t = step
+
+    def forward(self, x):
+        x = self.linear(self.norm(x))
+        y = torch.zeros_like(x)
+        for i in range(self.t):
+            y = (1 - self.a) * y + self.a * self.activation(y + x)
+        return self.out(y)
+
 
 class XYWHPositionEmbedding(nn.Module):
-    def __init__(self, num_pos_feats=64, temperature=10000, exchange_xy=True):
+    def __init__(self, num_pos_feats=64, temperature=10000, exchange_xy=False):
         super(XYWHPositionEmbedding, self).__init__()
         self.num_pos_feats = num_pos_feats
         self.temperature = temperature
@@ -73,10 +90,15 @@ class Fusion(nn.Module):
             nn.LayerNorm(output_dim),
             nn.Linear(output_dim, output_dim)
         )
+        self.nmode = nmode(output_dim)
+        self.norm1 = nn.LayerNorm(output_dim)
+        self.norm2 = nn.LayerNorm(output_dim)
+        self.alpha = nn.Parameter(torch.tensor(1.0))
     def forward(self, f, b):
         feature = self.img_proj(f)
-        bbox = self.bbox_proj(b)
-        h = feature + bbox
+        bbox = self. bbox_proj(b)
+        h = self.norm1(feature) + self.alpha * self.norm2(bbox)
+        h = self.nmode(h)
         return self.feature_fusion(h)
 
 class TrajectoryModeling(nn.Module):
