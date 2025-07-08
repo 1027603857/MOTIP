@@ -8,11 +8,13 @@ class MOTIP(nn.Module):
     def __init__(
             self,
             only_detr: bool,
+            feature_extractor: nn.Module,
             trajectory_modeling: nn.Module,
             id_decoder: nn.Module,
     ):
         super().__init__()
         self.only_detr = only_detr
+        self.feature_extractor = feature_extractor
         self.trajectory_modeling = trajectory_modeling
         self.id_decoder = id_decoder
 
@@ -26,6 +28,9 @@ class MOTIP(nn.Module):
     def forward(self, **kwargs):
         assert "part" in kwargs, "Parameter `part` is required for MOTIP forward."
         match kwargs["part"]:
+            case "feature_extractor":
+                annotations = kwargs["annotations"]
+                return self.feature_extractor(annotations)
             case "trajectory_modeling":
                 seq_info = kwargs["seq_info"]
                 return self.trajectory_modeling(seq_info)

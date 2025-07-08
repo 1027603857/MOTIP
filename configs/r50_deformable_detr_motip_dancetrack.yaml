@@ -108,7 +108,7 @@ USE_ACCELERATE_CLIP_NORM: True
 
 # Resumes and Pretrains:
 DETR_PRETRAIN:
-RESUME_MODEL: outputs/r50_deformable_detr_motip_dancetrack/checkpoint_5.pth
+RESUME_MODEL:
 RESUME_OPTIMIZER: True
 RESUME_SCHEDULER: True
 RESUME_STATES: True
@@ -116,12 +116,12 @@ RESUME_STATES: True
 # Inference settings:
 INFERENCE_MODEL:            # the model path for inference
 INFERENCE_DATASET: DanceTrack
-INFERENCE_SPLIT: val
 INFERENCE_MODE: evaluate    # evaluate or submit
 INFERENCE_GROUP: default    # group name for inference
 INFERENCE_MAX_LONGER: 1440  # max longer size for inference
 INFERENCE_DTYPE: FP32
 #ASSIGNMENT_PROTOCOL: hungarian
+INFERENCE_SPLIT: val
 ASSIGNMENT_PROTOCOL: object-max
 MISS_TOLERANCE: 30          # tolerance for missing frames
 DET_THRESH: 0.3
@@ -146,3 +146,4 @@ USE_PREVIOUS_CHECKPOINT: False
 
 # New
 N_GRID: 64
+CHANNELS: [3, 16, 32, 64, 128, 256]

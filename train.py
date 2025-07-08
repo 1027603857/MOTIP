@@ -29,7 +29,8 @@ from utils.nested_tensor import NestedTensor
 from submit_and_evaluate import submit_and_evaluate_one_model
 from utils.box_ops import box_cxcywh_to_xyxy
 from torchvision.ops import roi_align
-
+import setproctitle
+setproctitle.setproctitle("python3")
 
 def train_engine(config: dict):
     # Init some settings:
@@ -345,11 +346,11 @@ def train_one_epoch(
                     sampled_features = roi_align(
                         img_, rois,
                         output_size=(n_grid, n_grid),
-                    ).flatten(start_dim=1)
+                    )
                     annotations[bidx][fidx]["feature"] = sampled_features
 
                 else:
-                    annotations[bidx][fidx]["feature"] = torch.empty((0, img_.shape[1] * n_grid * n_grid), device=device)
+                    annotations[bidx][fidx]["feature"] = torch.empty((0, img_.shape[1], n_grid, n_grid), device=device)
 
         # Learning rate warmup:
         if epoch < lr_warmup_epochs:
@@ -365,9 +366,11 @@ def train_one_epoch(
         # Whether to only train the DETR, OR to train the MOTIP together:
         if not only_detr:
             _G, _, _N = annotations[0][0]["trajectory_id_labels"].shape
+            feature_embed = model(annotations=annotations, part="feature_extractor")
             # Need to prepare for MOTIP:
             seq_info = prepare_for_motip(
                 annotations=annotations,
+                feature_embed=feature_embed,
             )
             seq_info = model(seq_info=seq_info, part="trajectory_modeling")
             id_logits, id_gts, id_masks = model(
@@ -590,11 +593,11 @@ def tensor_dict_index_select(tensor_dict, index, dim=0):
     return dict(res_tensor_dict)
 
 
-def prepare_for_motip(annotations):
+def prepare_for_motip(annotations, feature_embed):
     _B, _T = len(annotations), len(annotations[0])
     _G, _, _N = annotations[0][0]["trajectory_id_labels"].shape
-    _device = annotations[0][0]["feature"].device
-    _feature_dim = annotations[0][0]["feature"].shape[-1]
+    _feature_dim = feature_embed.shape[-1]
+    _device = feature_embed.device
     # Init corresponding variables:
     trajectory_id_labels = - torch.ones((_B, _G, _T, _N), dtype=torch.int64, device=_device)
     trajectory_times = - torch.ones((_B, _G, _T, _N), dtype=torch.int64, device=_device)
@@ -621,8 +624,8 @@ def prepare_for_motip(annotations):
                 unknown_times[b, group, t] = annotations[b][t]["unknown_times"][group, 0, :]
                 trajectory_masks[b, group, t] = _curr_traj_masks
                 unknown_masks[b, group, t] = _curr_unk_masks
-                trajectory_features[b, group, t, ~_curr_traj_masks] = annotations[b][t]["feature"][_curr_traj_ann_idxs[~_curr_traj_masks]]
-                unknown_features[b, group, t, ~_curr_unk_masks] = annotations[b][t]["feature"][_curr_unk_ann_idxs[~_curr_unk_masks]]
+                trajectory_features[b, group, t, ~_curr_traj_masks] = feature_embed[b][t][_curr_traj_ann_idxs[~_curr_traj_masks]]
+                unknown_features[b, group, t, ~_curr_unk_masks] = feature_embed[b][t][_curr_unk_ann_idxs[~_curr_unk_masks]]
                 trajectory_boxes[b, group, t, ~_curr_traj_masks] = annotations[b][t]["bbox"][_curr_traj_ann_idxs[~_curr_traj_masks]]
                 unknown_boxes[b, group, t, ~_curr_unk_masks] = annotations[b][t]["bbox"][_curr_unk_ann_idxs[~_curr_unk_masks]]
                 pass

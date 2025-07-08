@@ -3,6 +3,7 @@
 from .motip import MOTIP
 from structures.args import Args
 from models.deformable_detr.deformable_detr import build as build_deformable_detr
+from models.motip.feature_extractor import FeatureExtractor
 from models.motip.trajectory_modeling import TrajectoryModeling
 from models.motip.id_decoder import IDDecoder
 
@@ -48,12 +49,14 @@ def build(config: dict):
     #         raise NotImplementedError(f"DETR framework {config['DETR_FRAMEWORK']} is not supported.")
 
     # Build each component:
+    _feature_extractor = FeatureExtractor(
+        channels=config["CHANNELS"],
+    ) if config["ONLY_DETR"] is False else None
     # 1. trajectory modeling (currently, only FFNs are used):
     _trajectory_modeling = TrajectoryModeling(
         detr_dim=config["DETR_HIDDEN_DIM"],
         ffn_dim_ratio=config["FFN_DIM_RATIO"],
         feature_dim=config["FEATURE_DIM"],
-        n_grid=config["N_GRID"],
     ) if config["ONLY_DETR"] is False else None
     # 2. ID decoder:
     _id_decoder = IDDecoder(
@@ -71,6 +74,7 @@ def build(config: dict):
     # Construct MOTIP model:
     motip_model = MOTIP(
         only_detr=config["ONLY_DETR"],
+        feature_extractor=_feature_extractor,
         trajectory_modeling=_trajectory_modeling,
         id_decoder=_id_decoder,
     )
