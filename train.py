@@ -29,8 +29,8 @@ from utils.nested_tensor import NestedTensor
 from submit_and_evaluate import submit_and_evaluate_one_model
 from utils.box_ops import box_cxcywh_to_xyxy
 from torchvision.ops import roi_align
-import setproctitle
-setproctitle.setproctitle("python3")
+from accelerate.utils import DistributedDataParallelKwargs
+from prefetch_generator import BackgroundGenerator
 
 def train_engine(config: dict):
     # Init some settings:
@@ -39,7 +39,11 @@ def train_engine(config: dict):
         else os.path.join("./outputs/", config["EXP_NAME"])
 
     # Init Accelerator at beginning:
-    accelerator = Accelerator()
+    ddp_kwargs = DistributedDataParallelKwargs(  # 任何 DDP 参数都能放进来
+        broadcast_buffers=False,
+        find_unused_parameters=False,  # 例如同时定制其他 DDP 选项
+    )
+    accelerator = Accelerator(kwargs_handlers=[ddp_kwargs])
     state = PartialState()
     # Also, we set the seed:
     set_seed(config["SEED"])
@@ -143,7 +147,7 @@ def train_engine(config: dict):
             path=config["RESUME_MODEL"],
             optimizer=optimizer if config["RESUME_OPTIMIZER"] else None,
             scheduler=scheduler if config["RESUME_SCHEDULER"] else None,
-            states=train_states,
+            states=train_states if config["RESUME_STATES"] else None,
         )
         # Different processing on scheduler:
         if config["RESUME_SCHEDULER"]:
@@ -316,14 +320,14 @@ def train_one_epoch(
         else:
             other_params.append(param)
 
-    for step, samples in enumerate(dataloader):
+    for step, samples in enumerate(BackgroundGenerator(dataloader)):
         images, annotations, metas = samples["images"], samples["annotations"], samples["metas"]
         # Normalize the images:
         # (Normally, it should be done in the dataloader, but here we do it in the training loop (on cuda).))
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
+        # mean = [0.485, 0.456, 0.406]
+        # std = [0.229, 0.224, 0.225]
         images.tensors = v2.functional.to_dtype(images.tensors, dtype=torch.float32, scale=True)
-        images.tensors = v2.functional.normalize(images.tensors, mean=mean, std=std)
+        # images.tensors = v2.functional.normalize(images.tensors, mean=mean, std=std)
         images.tensors = images.tensors.contiguous()
 
         _B, _T = len(annotations), len(annotations[0])
@@ -338,19 +342,19 @@ def train_one_epoch(
 
                 img_ = temp_imgs[fidx:fidx + 1]  # (1, C, H, W)
                 img_h, img_w = img_.shape[-2:]
-                box *= torch.tensor([img_w, img_h, img_w * 1.05, img_h * 1.05], device=box.device)
+                box *= torch.tensor([img_w, img_h, img_w, img_h], device=box.device)
 
                 if len(box):
                     x1, y1, x2, y2 = box.T
                     rois = torch.stack([torch.zeros_like(x1), x1, y1, x2, y2], dim=1)
                     sampled_features = roi_align(
                         img_, rois,
-                        output_size=(n_grid, n_grid),
+                        output_size=(256, 128),
                     )
                     annotations[bidx][fidx]["feature"] = sampled_features
 
                 else:
-                    annotations[bidx][fidx]["feature"] = torch.empty((0, img_.shape[1], n_grid, n_grid), device=device)
+                    annotations[bidx][fidx]["feature"] = torch.empty((0, img_.shape[1], 256, 128), device=device)
 
         # Learning rate warmup:
         if epoch < lr_warmup_epochs:

@@ -10,6 +10,34 @@ from models.misc import _get_clones, label_to_one_hot
 from models.ffn import FFN
 import math
 
+class BBoxGeomEncoder(nn.Module):
+    def __init__(self,
+                 hidden_dim: int = 256,
+                 out_dim: int = 512,
+                 eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps                       # 防止 log/除零
+        self.mlp = nn.Sequential(
+            nn.Linear(8, hidden_dim, bias=False),        # 8 = 4 原坐标 + 4 高阶特征
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, out_dim, bias=False)
+        )
+        # 可选：再加 LayerNorm 或 Dropout
+        self.norm = nn.LayerNorm(out_dim)
+
+    def forward(self, bbox: torch.Tensor) -> torch.Tensor:
+        cx, cy, w, h = bbox.unbind(-1)                      # 每个形状 (*)
+        cx, cy = (cx - 0.5) * 2, (cy - 0.5) * 2
+        logw, logh = torch.log(w + self.eps), torch.log(h + self.eps)
+        sqrt_area = torch.sqrt(w * h + self.eps)
+        log_ratio = torch.log((w + self.eps) / (h + self.eps))  # log(w/h)
+
+        geom_feat = torch.stack([cx, cy, w, h,
+                                 sqrt_area, log_ratio, logw, logh], dim=-1)  # (*, 8)
+        out = self.mlp(geom_feat)                           # (*, 256)
+        out = self.norm(out)
+        return out
+
 class XYWHPositionEmbedding(nn.Module):
     def __init__(self, num_pos_feats=128, temperature=10000, exchange_xy=True):
         super(XYWHPositionEmbedding, self).__init__()
@@ -63,7 +91,7 @@ class IDDecoder(nn.Module):
         self.use_aux_loss = use_aux_loss
         self.use_shared_aux_head = use_shared_aux_head
 
-        self.bbox_to_embed = XYWHPositionEmbedding()
+        self.bbox_to_embed = BBoxGeomEncoder()
 
         self.word_to_embed = nn.Linear(self.num_id_vocabulary + 1, self.id_dim, bias=False)
         embed_to_word = nn.Linear(self.id_dim, self.num_id_vocabulary + 1, bias=False)
@@ -138,10 +166,10 @@ class IDDecoder(nn.Module):
         trajectory_id_embeds = self.id_label_to_embed(id_labels=trajectory_id_labels)
         unknown_id_embeds = self.generate_empty_id_embed(unknown_features=unknown_features)
 
-        trajectory_embeds = torch.cat([trajectory_features, trajectory_id_embeds], dim=-1)
-        unknown_embeds = torch.cat([unknown_features, unknown_id_embeds], dim=-1)
         trajectory_bbox_embeds = self.bbox_to_embed(trajectory_boxes)
         unknown_bbox_embeds = self.bbox_to_embed(unknown_boxes)
+        trajectory_embeds = torch.cat([trajectory_features, trajectory_id_embeds], dim=-1) + trajectory_bbox_embeds
+        unknown_embeds = torch.cat([unknown_features, unknown_id_embeds], dim=-1) + unknown_bbox_embeds
 
         # Prepare some common variables:
         self_attn_key_padding_mask = einops.rearrange(unknown_masks, "b g t n -> (b g t) n").contiguous()
@@ -185,7 +213,6 @@ class IDDecoder(nn.Module):
                     self._forward_a_layer,
                     layer,
                     unknown_embeds, trajectory_embeds,
-                    unknown_bbox_embeds,trajectory_bbox_embeds,
                     self_attn_key_padding_mask, cross_attn_key_padding_mask,
                     cross_attn_mask, rel_pe_idxs,
                     use_reentrant=False,
@@ -195,8 +222,6 @@ class IDDecoder(nn.Module):
                     layer=layer,
                     unknown_embeds=unknown_embeds,
                     trajectory_embeds=trajectory_embeds,
-                    unknown_bbox_embeds=unknown_bbox_embeds,
-                    trajectory_bbox_embeds=trajectory_bbox_embeds,
                     self_attn_key_padding_mask=self_attn_key_padding_mask,
                     cross_attn_key_padding_mask=cross_attn_key_padding_mask,
                     cross_attn_mask=cross_attn_mask,
@@ -225,8 +250,6 @@ class IDDecoder(nn.Module):
             layer: int,
             unknown_embeds: torch.Tensor,
             trajectory_embeds: torch.Tensor,
-            unknown_bbox_embeds: torch.Tensor,
-            trajectory_bbox_embeds: torch.Tensor,
             self_attn_key_padding_mask: torch.Tensor,
             cross_attn_key_padding_mask: torch.Tensor,
             cross_attn_mask: torch.Tensor,
@@ -247,15 +270,13 @@ class IDDecoder(nn.Module):
         # Cross-attention for in-context decoding:
         cross_unknown_embeds = einops.rearrange(unknown_embeds, "b g t n c -> (b g) (t n) c").contiguous()
         cross_trajectory_embeds = einops.rearrange(trajectory_embeds, "b g t n c -> (b g) (t n) c").contiguous()
-        unknown_bbox_embeds = einops.rearrange(unknown_bbox_embeds, "b g t n c -> (b g) (t n) c").contiguous()
-        trajectory_bbox_embeds = einops.rearrange(trajectory_bbox_embeds, "b g t n c -> (b g) (t n) c").contiguous()
         # Prepare attn_mask:
         rel_pe_mask = self.rel_pos_embeds[layer][rel_pe_idx]
         cross_attn_mask_with_rel_pe = cross_attn_mask + einops.rearrange(rel_pe_mask, "bg l1 l2 n -> (bg n) l1 l2")
         # Apply cross-attention:
         cross_out, _ = self.cross_attn_layers[layer](
-            query=cross_unknown_embeds + unknown_bbox_embeds,
-            key=cross_trajectory_embeds + trajectory_bbox_embeds,
+            query=cross_unknown_embeds,
+            key=cross_trajectory_embeds,
             value=cross_trajectory_embeds,
             key_padding_mask=cross_attn_key_padding_mask,
             attn_mask=cross_attn_mask_with_rel_pe,

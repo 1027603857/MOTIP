@@ -50,7 +50,7 @@ def build(config: dict):
 
     # Build each component:
     _feature_extractor = FeatureExtractor(
-        channels=config["CHANNELS"],
+        pre_reid=(config["RESUME_MODEL"] is None),
     ) if config["ONLY_DETR"] is False else None
     # 1. trajectory modeling (currently, only FFNs are used):
     _trajectory_modeling = TrajectoryModeling(

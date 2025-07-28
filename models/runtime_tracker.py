@@ -72,7 +72,7 @@ class RuntimeTracker:
             self.id_queue.add(i)
         # All fields are in shape (T, N, ...)
         self.trajectory_features = torch.zeros(
-            (0, 0, self.n_grid * self.n_grid * 3), dtype=dtype, device=distributed_device(),
+            (0, 0, 256), dtype=dtype, device=distributed_device(),
         )
         self.trajectory_boxes = torch.zeros(
             (0, 0, 4), dtype=dtype, device=distributed_device(),
@@ -106,18 +106,20 @@ class RuntimeTracker:
 
         img_ = temp_imgs[:1]  # (1, C, H, W)
         img_h, img_w = img_.shape[-2:]
-        box *= torch.tensor([img_w, img_h, img_w * 1.05, img_h * 1.05], device=box.device)
+        box *= torch.tensor([img_w, img_h, img_w, img_h], device=box.device)
 
         if len(box):
             x1, y1, x2, y2 = box.T
             rois = torch.stack([torch.zeros_like(x1), x1, y1, x2, y2], dim=1)
             sampled_features = roi_align(
                 img_, rois,
-                output_size=(self.n_grid, self.n_grid),
-            ).flatten(start_dim=1)
+                output_size=(256, 128),
+            )
             output_embeds = sampled_features
         else:
-            output_embeds = torch.empty((0, img_.shape[1] * self.n_grid * self.n_grid), device=img_.device)
+            output_embeds = torch.empty((0, img_.shape[1], 256, 128), device=img_.device)
+
+        output_embeds = self.model(annotations=output_embeds, part="feature_extractor")
 
         if self.only_detr:
             id_pred_labels = self.num_id_vocabulary * torch.ones(boxes.shape[0], dtype=torch.int64, device=boxes.device)
@@ -305,7 +307,7 @@ class RuntimeTracker:
                 torch.arange(_T, dtype=torch.int64, device=distributed_device()), 't -> t n', n=_N,
             )
             _features = torch.zeros(
-                (_T, _N, self.n_grid * self.n_grid * 3), dtype=self.dtype, device=distributed_device(),
+                (_T, _N, 256), dtype=self.dtype, device=distributed_device(),
             )
             _masks = torch.ones((_T, _N), dtype=torch.bool, device=distributed_device())
             # 3.1. padding to trajectory infos:
@@ -317,7 +319,7 @@ class RuntimeTracker:
         # 4. update trajectory infos:
         _N = self.trajectory_id_labels.shape[1]
         current_id_labels = self.trajectory_id_labels[0] if self.trajectory_id_labels.shape[0] > 0 else id_labels
-        current_features = torch.zeros((_N, self.n_grid * self.n_grid * 3), dtype=self.dtype, device=distributed_device())
+        current_features = torch.zeros((_N, 256), dtype=self.dtype, device=distributed_device())
         current_boxes = torch.zeros((_N, 4), dtype=self.dtype, device=distributed_device())
         current_times = self.trajectory_id_labels.shape[0] * torch.ones((_N,), dtype=torch.int64, device=distributed_device())
         current_masks = torch.ones((_N,), dtype=torch.bool, device=distributed_device())
